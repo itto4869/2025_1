@@ -4,4 +4,14 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "autorom>=0.6.1",
+    "gymnasium[accept-rom-license,atari,mujoco]>=1.2.0",
+    "muon-optimizer",
+    "numpy>=2.2.6",
+    "stable-baselines3[extra]>=2.7.0",
+    "torch>=2.7.1",
+]
+
+[tool.uv.sources]
+muon-optimizer = { git = "https://github.com/KellerJordan/Muon" }
