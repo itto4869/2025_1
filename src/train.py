@@ -157,6 +157,7 @@ def train(config) -> PPO:
     
     # Save the model
     if config.save_path is not None:
-        model.save(config.save_path)
+        torch.save(model.policy.state_dict(), config.save_path + "policy.pth")
+        #model.save(config.save_path)
 
     return model
