@@ -1,9 +1,10 @@
 from .config import MujocoConfig, AtariConfig
 from .train import train
-from .network import MujocoPolicy, MujocoMuonPolicy, AtariPolicy, AtariMuonPolicy
-from .optimizer import create_optimizer_kwargs
+from .network import MujocoPolicy, AtariPolicy
+from .optimizer import create_optimizer_kwargs, atari_adam_lr_schedule, atari_soap_lr_schedule
 from .eval import eval
 from stable_baselines3 import PPO
+import time
 
 def set_config(
     env_id: str,
@@ -16,13 +17,17 @@ def set_config(
 ) -> AtariConfig | MujocoConfig:
     optimizer_kwargs = create_optimizer_kwargs(optimizer_name)
     if atari:
-        if optimizer_name == "muon":
-            policy_model = AtariMuonPolicy
-        else:
-            policy_model = AtariPolicy
+        match optimizer_name:
+            case "adam":
+                learning_rate = atari_soap_lr_schedule
+            case "soap":
+                learning_rate = atari_soap_lr_schedule
+            case "muon":
+                learning_rate = atari_adam_lr_schedule
         return AtariConfig(
             env_id=env_id,
-            policy_model=policy_model,
+            learning_rate=learning_rate,
+            policy_model=AtariPolicy,
             optimizer_kwargs=optimizer_kwargs,
             tensorboard_log=tensorboard_log,
             seed=seed,
@@ -30,13 +35,17 @@ def set_config(
             save_path=save_path,
         )
     else:
-        if optimizer_name == "muon":
-            policy_model = MujocoMuonPolicy
-        else:
-            policy_model = MujocoPolicy
+        match optimizer_name:
+            case "adam":
+                learning_rate = 3e-4
+            case "soap":
+                learning_rate = 3e-3
+            case "muon":
+                learning_rate = 2e-2
         return MujocoConfig(
             env_id=env_id,
-            policy_model=policy_model,
+            learning_rate=learning_rate,
+            policy_model=MujocoPolicy,
             optimizer_kwargs=optimizer_kwargs,
             tensorboard_log=tensorboard_log,
             seed=seed,
@@ -44,38 +53,57 @@ def set_config(
             save_path=save_path,
         )
 
-def run_experiment(config: AtariConfig | MujocoConfig) -> PPO:
+def run_experiment(config: AtariConfig | MujocoConfig) -> tuple[PPO, float]:
+    start = time.perf_counter()
     model = train(config)
-    return model
+    end = time.perf_counter()
+    print(f"Training time: {end - start:.2f} seconds")
+    duration = end - start
+    # TensorBoard logging of wall-clock and throughput
+    try:
+        steps = getattr(model, "num_timesteps", None)
+        if hasattr(model, "logger"):
+            model.logger.record("time/training_wall_clock_sec", float(duration))
+            if isinstance(steps, int) and duration > 0:
+                model.logger.record("time/steps_per_second", float(steps) / duration)
+            # dump at final step (use steps or 0 fallback)
+            dump_step = steps if isinstance(steps, int) else 0
+            model.logger.dump(step=dump_step)
+    except Exception as e:  # noqa: BLE001
+        print(f"[WARN] failed to log wall clock to TensorBoard: {e}")
+    return model, duration
     
 if __name__ == "__main__":
-    seed = 42
-    optimizer_name = "muon"
-    mujoco_config = set_config(
-        env_id="HalfCheetah-v5",
-        optimizer_name=optimizer_name,
-        tensorboard_log="tensorboard_logs/{seed}/mujoco/{optimizer_name}".format(seed=seed, optimizer_name=optimizer_name),
-        seed=seed,
-        total_timesteps=1_000_000,
-        atari=False,
-        save_path="models/{seed}/mujoco/{optimizer_name}".format(seed=seed, optimizer_name=optimizer_name),
-    )
+    seeds = [10]
+    optimizer_names = ["soap"]
+    for seed in seeds:
+        for optimizer_name in optimizer_names:
+            atari_config = set_config(
+                env_id="ale_py:ALE/Breakout-v5",
+                optimizer_name=optimizer_name,
+                tensorboard_log="tensorboard_logs/atari/{optimizer_name}/{seed}".format(seed=seed, optimizer_name=optimizer_name),
+                seed=seed,
+                total_timesteps=10_000_000,
+                atari=True,
+                #save_path="models/atari/{optimizer_name}/{seed}".format(seed=seed, optimizer_name=optimizer_name),
+            )
+            
+            mujoco_config = set_config(
+                env_id="HalfCheetah-v5",
+                optimizer_name=optimizer_name,
+                tensorboard_log="tensorboard_logs/mujoco/{optimizer_name}/{seed}".format(seed=seed, optimizer_name=optimizer_name),
+                seed=seed,
+                total_timesteps=5_000_000,
+                atari=False,
+                save_path="models/mujoco/{optimizer_name}/{seed}".format(seed=seed, optimizer_name=optimizer_name),
+            )
+            
+            atari_model, atari_wall_clock = run_experiment(atari_config)
+            #mujoco_model, mujoco_wall_clock = run_experiment(mujoco_config)
 
-    atari_config = set_config(
-        env_id="ale_py:ALE/Breakout-v5",
-        optimizer_name=optimizer_name,
-        tensorboard_log="tensorboard_logs/{seed}/atari/{optimizer_name}".format(seed=seed, optimizer_name=optimizer_name),
-        seed=seed,
-        total_timesteps=1_000_000,
-        atari=True,
-        save_path="models/{seed}/atari/{optimizer_name}".format(seed=seed, optimizer_name=optimizer_name),
-    )
-    
-    mujoco_model = run_experiment(mujoco_config)
-    atari_model = run_experiment(atari_config)
-    
-    mujoco_mean_reward = eval(mujoco_model, mujoco_config)
-    atari_mean_reward = eval(atari_model, atari_config)
-    
-    print(f"Mujoco Mean Reward: {mujoco_mean_reward}")
-    print(f"Atari Mean Reward: {atari_mean_reward}")
+            atari_metrics = eval(atari_model, atari_config)
+            #mujoco_metrics = eval(mujoco_model, mujoco_config)
+
+            print(f"Seed: {seed}, Optimizer: {optimizer_name}")
+            print(f"Atari Metrics: {atari_metrics}")
+            #print(f"Mujoco Metrics: {mujoco_metrics}")

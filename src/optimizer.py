@@ -20,11 +20,22 @@ def create_optimizer_kwargs(
     elif optimizer_name == "muon":
         return {
             "muon_cfg": {
-                "muon_lr": 2e-2,
-                "muon_weight_decay": 1e-2,
-                "adam_betas": (0.9, 0.95),
-                "adam_weight_decay": 1e-2,
+                # Base LR for Muon; linearly decays via SB3 ratio coupling
+                # to match Adam's schedule shape.
+                "muon_lr": 3.0e-4,
+                # Set floor to 0.0 to allow pure linear decay to zero if desired.
+                "muon_lr_floor": 0.0,
+                "muon_weight_decay": 0.0,
+                # Align Adam with SB3-style defaults
+                "adam_betas": (0.9, 0.999),
+                "adam_weight_decay": 0.0,
             }
         }
     else:
         raise ValueError(f"Unsupported optimizer: {optimizer_name}")
+
+def atari_adam_lr_schedule(progress: float) -> float:
+    return 2.5e-4 * progress
+
+def atari_soap_lr_schedule(progress: float) -> float:
+    return 3.0e-4 * progress
