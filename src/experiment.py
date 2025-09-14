@@ -85,7 +85,7 @@ if __name__ == "__main__":
                 seed=seed,
                 total_timesteps=10_000_000,
                 atari=True,
-                #save_path="models/atari/{optimizer_name}/{seed}".format(seed=seed, optimizer_name=optimizer_name),
+                save_path="models/atari/{optimizer_name}/{seed}".format(seed=seed, optimizer_name=optimizer_name),
             )
             
             mujoco_config = set_config(
