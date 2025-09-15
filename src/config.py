@@ -16,11 +16,11 @@ class AtariConfig:
     tensorboard_log: str
     learning_rate: Callable[[float], float] | float
     atari_env: bool = True
-    n_envs: int = 8
+    n_envs: int = 16
     n_stack: int = 4
     n_steps: int = 128
     n_epochs: int = 3
-    batch_size: int = 32 * 8
+    batch_size: int = 32 * 16
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_range: Callable[[float], float] | float = clip_range_schedule

@@ -75,7 +75,7 @@ def run_experiment(config: AtariConfig | MujocoConfig) -> tuple[PPO, float]:
     
 if __name__ == "__main__":
     seeds = [7, 19, 801, 3, 2025, 777, 1015, 420, 906, 75]
-    optimizer_names = ["adam"]
+    optimizer_names = ["soap"]
     for seed in seeds:
         for optimizer_name in optimizer_names:
             atari_config = set_config(
