@@ -35,7 +35,8 @@ def create_optimizer_kwargs(
         raise ValueError(f"Unsupported optimizer: {optimizer_name}")
 
 def atari_adam_lr_schedule(progress: float) -> float:
-    return 2.5e-4 * progress
+    #return 2.5e-4 * progress
+    return 3.0e-4 * progress
 
 def atari_soap_lr_schedule(progress: float) -> float:
     return 3.0e-4 * progress

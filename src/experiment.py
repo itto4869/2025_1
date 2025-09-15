@@ -19,7 +19,7 @@ def set_config(
     if atari:
         match optimizer_name:
             case "adam":
-                learning_rate = atari_soap_lr_schedule
+                learning_rate = atari_adam_lr_schedule
             case "soap":
                 learning_rate = atari_soap_lr_schedule
             case "muon":
@@ -74,8 +74,8 @@ def run_experiment(config: AtariConfig | MujocoConfig) -> tuple[PPO, float]:
     return model, duration
     
 if __name__ == "__main__":
-    seeds = [10]
-    optimizer_names = ["soap"]
+    seeds = [7, 19, 801, 3, 2025, 777, 1015, 420, 906, 75]
+    optimizer_names = ["adam"]
     for seed in seeds:
         for optimizer_name in optimizer_names:
             atari_config = set_config(
