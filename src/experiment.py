@@ -155,7 +155,7 @@ def _run_single_atari_experiment(
 
 
 if __name__ == "__main__":
-    seeds = [10, 7, 19, 801, 3, 2025, 777, 1015, 420, 906, 75]
+    seeds = [7, 19, 801, 3, 2025, 777, 1015, 420, 906, 75]
     optimizer_names = ["muon"]
 
     jobs: list[tuple[int, str, str, str]] = []

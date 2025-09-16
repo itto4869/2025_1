@@ -22,7 +22,7 @@ def create_optimizer_kwargs(
             "muon_cfg": {
                 # Base LR for Muon; linearly decays via SB3 ratio coupling
                 # to match Adam's schedule shape.
-                "muon_lr": 3.0e-4,
+                "muon_lr": 3.0e-3,
                 # Set floor to 0.0 to allow pure linear decay to zero if desired.
                 "muon_lr_floor": 0.0,
                 "muon_weight_decay": 0.0,
