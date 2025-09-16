@@ -2,6 +2,11 @@ from dataclasses import dataclass, field
 from typing import Callable
 from stable_baselines3.common.policies import ActorCriticPolicy
 
+
+DEFAULT_ATARI_N_ENVS = 7
+DEFAULT_ATARI_BATCH_MULTIPLIER = 32
+
+
 def atari_lr_schedule(progress: float) -> float:
     return 3.0e-3 * progress
 
@@ -16,11 +21,11 @@ class AtariConfig:
     tensorboard_log: str
     learning_rate: Callable[[float], float] | float
     atari_env: bool = True
-    n_envs: int = 16
+    n_envs: int = DEFAULT_ATARI_N_ENVS
     n_stack: int = 4
     n_steps: int = 128
     n_epochs: int = 3
-    batch_size: int = 32 * 16
+    batch_size: int = DEFAULT_ATARI_BATCH_MULTIPLIER * DEFAULT_ATARI_N_ENVS
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_range: Callable[[float], float] | float = clip_range_schedule
