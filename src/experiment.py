@@ -1,6 +1,11 @@
+import argparse
 import multiprocessing
+import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
+
+from stable_baselines3 import PPO
 
 from .config import (
     DEFAULT_ATARI_BATCH_MULTIPLIER,
@@ -8,12 +13,14 @@ from .config import (
     AtariConfig,
     MujocoConfig,
 )
-from .train import train
-from .network import MujocoPolicy, AtariPolicy
-from .optimizer import create_optimizer_kwargs, atari_adam_lr_schedule, atari_soap_lr_schedule
 from .eval import eval
-from stable_baselines3 import PPO
-import time
+from .network import AtariPolicy, MujocoPolicy
+from .optimizer import (
+    atari_adam_lr_schedule,
+    atari_soap_lr_schedule,
+    create_optimizer_kwargs,
+)
+from .train import train
 
 
 ATARI_ENV_IDS = {
@@ -29,9 +36,43 @@ ATARI_ENV_IDS = {
     "montezuma_revenge": "ale_py:ALE/MontezumaRevenge-v5",
 }
 
+MUJOCO_ENV_IDS = {
+    "ant": "Ant-v5",
+    "halfcheetah": "HalfCheetah-v5",
+    "hopper": "Hopper-v5",
+    "walker2d": "Walker2d-v5",
+    "humanoid": "Humanoid-v5",
+    "humanoidstandup": "HumanoidStandup-v5",
+    "invertedpendulum": "InvertedPendulum-v5",
+    "inverteddoublependulum": "InvertedDoublePendulum-v5",
+    "swimmer": "Swimmer-v5",
+    "reacher": "Reacher-v5",
+    "pusher": "Pusher-v5",
+}
+
 PARALLEL_EXPERIMENTS = 2
 ATARI_TOTAL_TIMESTEPS = 10_000_000
+MUJOCO_TOTAL_TIMESTEPS = 1_000_000
 _MP_CONTEXT = multiprocessing.get_context("spawn")
+
+
+@dataclass(frozen=True)
+class ExperimentJob:
+    suite: str  # "atari" or "mujoco"
+    seed: int
+    optimizer: str
+    env_key: str
+    env_id: str
+    total_timesteps: int
+
+
+def _ensure_keys(requested: list[str] | None, mapping: dict[str, str], suite: str) -> list[str]:
+    if requested is None:
+        return list(mapping.keys())
+    missing = [key for key in requested if key not in mapping]
+    if missing:
+        raise ValueError(f"Unknown {suite} env keys: {', '.join(missing)}")
+    return requested
 
 def set_config(
     env_id: str,
@@ -76,9 +117,9 @@ def set_config(
             case "adam":
                 learning_rate = 3e-4
             case "soap":
-                learning_rate = 3e-3
+                learning_rate = 3e-4
             case "muon":
-                learning_rate = 2e-2
+                learning_rate = 3e-4
         return MujocoConfig(
             env_id=env_id,
             learning_rate=learning_rate,
@@ -111,32 +152,29 @@ def run_experiment(config: AtariConfig | MujocoConfig) -> tuple[PPO, float]:
     return model, duration
 
 
-def _run_single_atari_experiment(
-    seed: int,
-    optimizer_name: str,
-    game_key: str,
-    env_id: str,
-) -> dict:
-    tensorboard_dir = f"tensorboard_logs/atari/{game_key}/{optimizer_name}/{seed}"
-    model_dir = f"models/atari/{game_key}/{optimizer_name}/{seed}"
+def _run_single_job(job: ExperimentJob) -> dict:
+    is_atari = job.suite == "atari"
+    tensorboard_dir = f"tensorboard_logs/{job.suite}/{job.env_key}/{job.optimizer}/{job.seed}"
+    model_dir = f"models/{job.suite}/{job.env_key}/{job.optimizer}/{job.seed}"
     Path(tensorboard_dir).mkdir(parents=True, exist_ok=True)
     Path(model_dir).mkdir(parents=True, exist_ok=True)
 
-    config = set_config(
-        env_id=env_id,
-        optimizer_name=optimizer_name,
+    config_kwargs = dict(
+        env_id=job.env_id,
+        optimizer_name=job.optimizer,
         tensorboard_log=tensorboard_dir,
-        seed=seed,
-        total_timesteps=ATARI_TOTAL_TIMESTEPS,
-        atari=True,
+        seed=job.seed,
+        total_timesteps=job.total_timesteps,
+        atari=is_atari,
         save_path=f"{model_dir}/",
-        n_envs=DEFAULT_ATARI_N_ENVS,
     )
+    if is_atari:
+        config_kwargs["n_envs"] = DEFAULT_ATARI_N_ENVS
+    config = set_config(**config_kwargs)
 
     model, wall_clock = run_experiment(config)
-    metrics = eval(model, config, tag=game_key)
+    metrics = eval(model, config, tag=job.env_key)
 
-    # Release vectorized environment resources before returning to parent.
     try:
         if hasattr(model, "env"):
             model.env.close()  # type: ignore[call-arg]
@@ -145,41 +183,120 @@ def _run_single_atari_experiment(
 
     del model
     return {
-        "seed": seed,
-        "optimizer": optimizer_name,
-        "game_key": game_key,
-        "env_id": env_id,
+        "seed": job.seed,
+        "optimizer": job.optimizer,
+        "suite": job.suite,
+        "env_key": job.env_key,
+        "env_id": job.env_id,
         "training_time": wall_clock,
         "metrics": metrics,
     }
 
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run Atari and Mujoco training suites.")
+    parser.add_argument(
+        "--suite",
+        choices=["atari", "mujoco", "both"],
+        default="atari",
+        help="Choose which suite to run.",
+    )
+    parser.add_argument(
+        "--seeds",
+        type=int,
+        nargs="+",
+        default=[7, 19, 801, 3, 2025, 777, 1015, 420, 906, 75],
+        help="Random seeds to sweep.",
+    )
+    parser.add_argument(
+        "--optimizers",
+        nargs="+",
+        default=["muon"],
+        help="Optimizer names to evaluate.",
+    )
+    parser.add_argument(
+        "--atari-envs",
+        nargs="+",
+        default=None,
+        help="Subset of Atari env keys to run.",
+    )
+    parser.add_argument(
+        "--mujoco-envs",
+        nargs="+",
+        default=None,
+        help="Subset of Mujoco env keys to run.",
+    )
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=PARALLEL_EXPERIMENTS,
+        help="Maximum concurrent experiments.",
+    )
+    parser.add_argument(
+        "--atari-timesteps",
+        type=int,
+        default=ATARI_TOTAL_TIMESTEPS,
+        help="Total timesteps per Atari run.",
+    )
+    parser.add_argument(
+        "--mujoco-timesteps",
+        type=int,
+        default=MUJOCO_TOTAL_TIMESTEPS,
+        help="Total timesteps per Mujoco run.",
+    )
+    return parser.parse_args()
+
 if __name__ == "__main__":
-    seeds = [7, 19, 801, 3, 2025, 777, 1015, 420, 906, 75]
-    optimizer_names = ["muon"]
+    args = _parse_args()
 
-    jobs: list[tuple[int, str, str, str]] = []
-    for seed in seeds:
-        for optimizer_name in optimizer_names:
-            for game_key, env_id in ATARI_ENV_IDS.items():
-                jobs.append((seed, optimizer_name, game_key, env_id))
+    suites: list[str]
+    if args.suite == "both":
+        suites = ["atari", "mujoco"]
+    else:
+        suites = [args.suite]
 
-    with ProcessPoolExecutor(max_workers=PARALLEL_EXPERIMENTS, mp_context=_MP_CONTEXT) as executor:
-        futures = {
-            executor.submit(_run_single_atari_experiment, seed, optimizer, game_key, env_id):
-            (seed, optimizer, game_key, env_id)
-            for seed, optimizer, game_key, env_id in jobs
-        }
+    atari_keys = (
+        _ensure_keys(args.atari_envs, ATARI_ENV_IDS, "atari") if "atari" in suites else []
+    )
+    mujoco_keys = (
+        _ensure_keys(args.mujoco_envs, MUJOCO_ENV_IDS, "mujoco") if "mujoco" in suites else []
+    )
+
+    jobs: list[ExperimentJob] = []
+    for suite in suites:
+        env_keys = atari_keys if suite == "atari" else mujoco_keys
+        timestep_budget = args.atari_timesteps if suite == "atari" else args.mujoco_timesteps
+        for seed in args.seeds:
+            for optimizer_name in args.optimizers:
+                for env_key in env_keys:
+                    env_id = ATARI_ENV_IDS[env_key] if suite == "atari" else MUJOCO_ENV_IDS[env_key]
+                    jobs.append(
+                        ExperimentJob(
+                            suite=suite,
+                            seed=seed,
+                            optimizer=optimizer_name,
+                            env_key=env_key,
+                            env_id=env_id,
+                            total_timesteps=timestep_budget,
+                        )
+                    )
+
+    if not jobs:
+        raise RuntimeError("No experiments scheduled. Check suite and env selections.")
+
+    with ProcessPoolExecutor(max_workers=args.max_workers, mp_context=_MP_CONTEXT) as executor:
+        futures = {executor.submit(_run_single_job, job): job for job in jobs}
 
         for future in as_completed(futures):
             result = future.result()
             metrics = result["metrics"]
             print(
-                "Seed: {seed}, Optimizer: {optimizer}, Game: {game}, Time: {time:.2f}s".format(
+                "[{suite}] Seed: {seed}, Optimizer: {optimizer}, Env: {env}, Time: {time:.2f}s".format(
+                    suite=result["suite"],
                     seed=result["seed"],
                     optimizer=result["optimizer"],
-                    game=result["env_id"],
+                    env=result["env_id"],
                     time=result["training_time"],
                 )
             )
-            print(f"Metrics ({result['game_key']}): {metrics}")
+            print(f"Metrics ({result['suite']}:{result['env_key']}): {metrics}")

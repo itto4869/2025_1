@@ -48,7 +48,7 @@ class MujocoConfig:
     tensorboard_log: str
     learning_rate: Callable[[float], float] | float
     atari_env: bool = False
-    n_envs: int = 8
+    n_envs: int = 7
     n_steps: int = 2048
     n_epochs: int = 10
     batch_size: int = 64
