@@ -115,6 +115,10 @@ def train(config) -> PPO:
                                          lr=muon_lr, weight_decay=muon_wd))
             # Keep biases and policy/value heads on Adam
             adam_params_all = fe_bias + mlp_bias + head_params
+            
+            if hasattr(pol, "log_std") and isinstance(pol.log_std, torch.nn.Parameter):
+                if pol.log_std.requires_grad:
+                    adam_params_all.append(pol.log_std)
             if adam_params_all:
                 param_groups.append(dict(params=adam_params_all, use_muon=False,
                                          lr=adam_lr, betas=adam_betas, weight_decay=adam_wd))
